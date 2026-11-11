@@ -1,0 +1,72 @@
+#!/bin/sh
+MODE_FILE="/tmp/powerd.mode"
+
+set_mode() {
+    echo "$1" > "$MODE_FILE"
+    echo "[powerctl] Mode switched to: $1"
+}
+
+get_power_watts() {
+    # 1. Check hwmon power1_input (microwatts)
+    for f in /sys/class/hwmon/hwmon*/power1_input; do
+        if [ -f "$f" ]; then
+            UW=$(cat "$f" 2>/dev/null || echo 0)
+            if [ "$UW" -gt 0 ] 2>/dev/null; then
+                W_WHOLE=$((UW / 1000000))
+                W_FRAC=$(((UW % 1000000) / 10000))
+                if [ "$W_FRAC" -lt 10 ]; then
+                    W_FRAC="0$W_FRAC"
+                fi
+                echo "${W_WHOLE}.${W_FRAC}"
+                return
+            fi
+        fi
+    done
+
+    # 2. Check RAPL energy_uj delta if power1_input is unavailable
+    for f in /sys/class/powercap/*/energy_uj /sys/class/powercap/*/*/energy_uj; do
+        if [ -f "$f" ]; then
+            E1=$(cat "$f" 2>/dev/null || echo 0)
+            sleep 1
+            E2=$(cat "$f" 2>/dev/null || echo 0)
+            if [ "$E1" -gt 0 ] 2>/dev/null && [ "$E2" -ge "$E1" ] 2>/dev/null; then
+                DELTA=$((E2 - E1))
+                W_WHOLE=$((DELTA / 1000000))
+                W_FRAC=$(((DELTA % 1000000) / 10000))
+                if [ "$W_FRAC" -lt 10 ]; then
+                    W_FRAC="0$W_FRAC"
+                fi
+                echo "${W_WHOLE}.${W_FRAC}"
+                return
+            fi
+        fi
+    done
+
+    echo "0.00"
+}
+
+show_status() {
+    CURRENT="balanced"
+    [ -f "$MODE_FILE" ] && CURRENT=$(cat "$MODE_FILE")
+    ONLINE=$(cat /sys/devices/system/cpu/online 2>/dev/null)
+    WATTS=$(get_power_watts)
+
+    echo "=========================================="
+    echo "       POWERD LOW-LEVEL CONTROLLER        "
+    echo "=========================================="
+    echo " Active Mode  : $CURRENT"
+    echo " Online Cores : $ONLINE"
+    echo " Package Draw : ${WATTS} W"
+    echo "=========================================="
+}
+
+case "$1" in
+    low-power|low)     set_mode "low-power" ;;
+    balanced|bal)       set_mode "balanced" ;;
+    performance|perf)   set_mode "performance" ;;
+    status)             show_status ;;
+    *)
+        show_status
+        ;;
+esac
+
