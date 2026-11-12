@@ -175,7 +175,22 @@ snprintf(path, sizeof(path), "/sys/devices/system/cpu/cpu%d/cpufreq/scaling_gove
 write_sysfs_safe(path, gov);
 }
 
+void apply_intel_limits(PowerMode mode) {
+    if (cpu_vendor != VENDOR_INTEL) return;
+
+    const char *no_turbo = (mode == MODE_LOW_POWER) ? "1" : "0";
+    const char *pl1_uw = (mode == MODE_LOW_POWER)   ? "6000000" :
+                         (mode == MODE_BALANCED)    ? "15000000" : "35000000";
+
+    write_sysfs_safe("/sys/devices/system/cpu/intel_pstate/no_turbo", no_turbo);
+
+    if (write_sysfs_safe("/sys/class/powercap/intel-rapl/intel-rapl:0/constraint_0_power_limit_uw", pl1_uw) < 0) {
+        write_sysfs_safe("/sys/class/powercap/intel-rapl:0/constraint_0_power_limit_uw", pl1_uw);
+    }
+}
+
 void apply_mode(PowerMode mode) {
+    apply_intel_limits(mode);
 long total_cpus = sysconf(_SC_NPROCESSORS_CONF);
 if (total_cpus <= 0) total_cpus = 16;
 
