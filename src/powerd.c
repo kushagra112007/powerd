@@ -189,59 +189,80 @@ void apply_intel_limits(PowerMode mode) {
     }
 }
 
+void apply_amd_limits(PowerMode mode) {
+    if (cpu_vendor != VENDOR_AMD) return;
+    const char *max_khz = (mode == MODE_LOW_POWER) ? "1600000" : "5200000";
+    long total_cpus = sysconf(_SC_NPROCESSORS_CONF);
+    if (total_cpus <= 0) total_cpus = 16;
+
+    for (int i = 0; i < total_cpus; i++) {
+        char path[96];
+        snprintf(path, sizeof(path), "/sys/devices/system/cpu/cpu%d/cpufreq/scaling_max_freq", i);
+        write_sysfs_safe(path, max_khz);
+    }
+
+    if (access("/usr/bin/ryzenadj", X_OK) == 0 || access("/usr/local/bin/ryzenadj", X_OK) == 0) {
+        if (mode == MODE_LOW_POWER)
+            system("ryzenadj --stapm-limit=8000 --fast-limit=10000 --slow-limit=8000 >/dev/null 2>&1");
+        else if (mode == MODE_BALANCED)
+            system("ryzenadj --stapm-limit=25000 --fast-limit=35000 --slow-limit=25000 >/dev/null 2>&1");
+        else
+            system("ryzenadj --stapm-limit=45000 --fast-limit=55000 --slow-limit=45000 >/dev/null 2>&1");
+    }
+}
+
 void apply_mode(PowerMode mode) {
     apply_intel_limits(mode);
-long total_cpus = sysconf(_SC_NPROCESSORS_CONF);
-if (total_cpus <= 0) total_cpus = 16;
+    apply_amd_limits(mode);
+    long total_cpus = sysconf(_SC_NPROCESSORS_CONF);
+    if (total_cpus <= 0) total_cpus = 16;
 
-if (mode == MODE_LOW_POWER) {
-set_governor(0, "powersave");
-for (int i = 1; i < total_cpus; i++) {
-if (is_smt_sibling(i)) {
-set_core(i, 0);
-} else if (0) {
-set_core(i, 0);
-} else {
-set_core(i, 1);
-set_governor(i, "powersave");
-}
-}
-} else if (mode == MODE_BALANCED) {
-set_governor(0, "schedutil");
-for (int i = 1; i < total_cpus; i++) {
-set_core(i, 1);
-set_governor(i, "schedutil");
-}
-} else if (mode == MODE_PERFORMANCE) {
-set_governor(0, "performance");
-for (int i = 1; i < total_cpus; i++) {
-set_core(i, 1);
-set_governor(i, "performance");
-}
-}
+    if (mode == MODE_LOW_POWER) {
+        set_governor(0, "powersave");
+        for (int i = 1; i < total_cpus; i++) {
+            if (cpu_vendor == VENDOR_INTEL && is_smt_sibling(i)) {
+                set_core(i, 0);
+            } else {
+                set_core(i, 1);
+                set_governor(i, "powersave");
+            }
+        }
+    } else if (mode == MODE_BALANCED) {
+        set_governor(0, "schedutil");
+        for (int i = 1; i < total_cpus; i++) {
+            set_core(i, 1);
+            set_governor(i, "schedutil");
+        }
+    } else if (mode == MODE_PERFORMANCE) {
+        set_governor(0, "performance");
+        for (int i = 1; i < total_cpus; i++) {
+            set_core(i, 1);
+            set_governor(i, "performance");
+        }
+    }
 }
 
 PowerMode get_current_mode(void) {
-int fd = open(MODE_FILE, O_RDONLY);
-if (fd < 0) return MODE_BALANCED;
+    int fd = open(MODE_FILE, O_RDONLY);
+    if (fd < 0) return MODE_BALANCED;
 
-char buf[16] = {0};
-read(fd, buf, sizeof(buf) - 1);
-close(fd);
+    char buf[16] = {0};
+    read(fd, buf, sizeof(buf) - 1);
+    close(fd);
 
-if (strncmp(buf, "low-power", 9) == 0) return MODE_LOW_POWER;
-if (strncmp(buf, "performance", 11) == 0) return MODE_PERFORMANCE;
-return MODE_BALANCED;
+    if (strncmp(buf, "low-power", 9) == 0) return MODE_LOW_POWER;
+    if (strncmp(buf, "performance", 11) == 0) return MODE_PERFORMANCE;
+    return MODE_BALANCED;
 }
 
 int main(void) {
-detect_hardware();
+    detect_hardware();
 
-while (1) {
-PowerMode mode = get_current_mode();
-apply_mode(mode);
-sleep(1);
-update_telemetry();
-}
-return 0;
+    while (1) {
+        PowerMode mode = get_current_mode();
+        apply_mode(mode);
+        sleep(1);
+        update_telemetry();
+    }
+    return 0;
 }
