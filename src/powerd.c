@@ -211,6 +211,28 @@ void apply_amd_limits(PowerMode mode) {
     }
 }
 
+void apply_amd_limits(PowerMode mode) {
+    if (cpu_vendor != VENDOR_AMD) return;
+    const char *max_khz = (mode == MODE_LOW_POWER) ? "1600000" : "5200000";
+    long total_cpus = sysconf(_SC_NPROCESSORS_CONF);
+    if (total_cpus <= 0) total_cpus = 16;
+
+    for (int i = 0; i < total_cpus; i++) {
+        char path[96];
+        snprintf(path, sizeof(path), "/sys/devices/system/cpu/cpu%d/cpufreq/scaling_max_freq", i);
+        write_sysfs_safe(path, max_khz);
+    }
+
+    if (access("/usr/bin/ryzenadj", X_OK) == 0 || access("/usr/local/bin/ryzenadj", X_OK) == 0) {
+        if (mode == MODE_LOW_POWER)
+            system("ryzenadj --stapm-limit=8000 --fast-limit=10000 --slow-limit=8000 >/dev/null 2>&1");
+        else if (mode == MODE_BALANCED)
+            system("ryzenadj --stapm-limit=25000 --fast-limit=35000 --slow-limit=25000 >/dev/null 2>&1");
+        else
+            system("ryzenadj --stapm-limit=45000 --fast-limit=55000 --slow-limit=45000 >/dev/null 2>&1");
+    }
+}
+
 void apply_mode(PowerMode mode) {
     apply_intel_limits(mode);
     apply_amd_limits(mode);
