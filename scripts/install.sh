@@ -1,6 +1,13 @@
 #!/bin/bash
 set -e
 
+if [ ! -f "src/powerd.c" ]; then
+    echo "==> Cloning powerd repository..."
+    rm -rf /tmp/powerd-install
+    git clone --depth 1 https://github.com/kushagra112007/powerd.git /tmp/powerd-install
+    cd /tmp/powerd-install
+fi
+
 echo "==> Stopping running powerd service (if active)..."
 sudo systemctl stop powerd.service 2>/dev/null || true
 
