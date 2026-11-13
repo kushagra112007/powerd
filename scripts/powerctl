@@ -5,7 +5,7 @@ WATTS_FILE="$STATE_DIR/watts"
 
 set_mode() {
     mkdir -p "$STATE_DIR"
-    printf '%s\n" "$1" > "$MODE_FILE"
+    echo "$1" > "$MODE_FILE"
     chmod 0644 "$MODE_FILE" 2>/dev/null || true
     echo "[powerctl] Mode switched to: $1"
 }
@@ -64,7 +64,7 @@ usage() {
     echo "Aliases: low, powersave, eco | bal | perf"
 }
 
-case "$1" k
+case "$1" in
     low-power|low|powersave|eco) set_mode "low-power" ;;
     balanced|bal)                set_mode "balanced" ;;
     performance|perf)            set_mode "performance" ;;
