@@ -46,7 +46,8 @@ AFTER  powerd (Load) : 5118 mW
 Max Freq (kHz) : 1600000
 Active Gov     : powersave
 Ryzen 7 8845HS BEFORE (Stock Load) : 20565 mW
-Ryzen 7 8845HS AFTER  (1.60 GHz]   : 12755 mW```
+Ryzen 7 8845HS AFTER  (1.60 GHz)   : 12755 mW
+```
 </details>
 
 ## Quick Install
