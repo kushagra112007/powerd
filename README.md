@@ -53,7 +53,7 @@ Ryzen 7 8845HS AFTER  (1.60 GHz)   : 12755 mW
 ## Quick Install
 
 ```sh
-curl -4 -fL [https://raw.githubusercontent.com/kushagra112007/powerd/main/scripts/install.sh](https://raw.githubusercontent.com/kushagra112007/powerd/main/scripts/install.sh) | sh
+curl -4 -fL https://raw.githubusercontent.com/kushagra112007/powerd/main/scripts/install.sh | sh
 ```
 
 ## Usage
