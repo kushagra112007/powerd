@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -5,9 +6,14 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <glob.h>
+#include <sys/file.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
 
-#define MODE_FILE  "/tmp/powerd.mode"
-#define WATTS_FILE "/tmp/powerd.watts"
+#define STATE_DIR  "/run/powerd"
+#define PID_FILE   "/run/powerd/powerd.pid"
+#define MODE_FILE  "/run/powerd/mode"
+#define WATTS_FILE "/run/powerd/watts"
 
 typedef enum { VENDOR_INTEL, VENDOR_AMD, VENDOR_UNKNOWN } CpuVendor;
 typedef enum { TELEM_NONE, TELEM_HWMON_UW, TELEM_RAPL_UJ } TelemType;
@@ -17,6 +23,49 @@ static CpuVendor cpu_vendor = VENDOR_UNKNOWN;
 static TelemType telem_type = TELEM_NONE;
 static char telemetry_path[128] = {0};
 static unsigned long long prev_energy_uj = 0;
+
+static int spawn_safe(const char *bin, char *const argv[]) {
+    if (access(bin, X_OK) != 0) return -1;
+
+    pid_t pid = fork();
+    if (pid < 0) return -1;
+
+    if (pid == 0) {
+        int devnull = open("/dev/null", O_WRONLY);
+        if (devnull >= 0) {
+            dup2(devnull, STDOUT_FILENO);
+            dup2(devnull, STDERR_FILENO);
+            if (devnull > 2) close(devnull);
+        }
+        char *const envp[] = { "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", NULL };
+        execve(bin, argv, envp);
+        _exit(127);
+    }
+
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) return -1;
+    return (WIFEXITED(status) && WEXITSTATUS(status) == 0) ? 0 : -1;
+}
+
+static int acquire_singleton_lock(void) {
+    mkdir(STATE_DIR, 0755);
+    chmod(STATE_DIR, 0755);
+
+    int fd = open(PID_FILE, O_CREAT | O_RDWR, 0600);
+    if (fd < 0) return -1;
+
+    if (flock(fd, LOCK_EX | LOCK_NB) < 0) {
+        close(fd);
+        return -1;
+    }
+
+    if (ftruncate(fd, 0) == 0) {
+        char pid_buf[32];
+        int len = snprintf(pid_buf, sizeof(pid_buf), "%d\n", getpid());
+        if (len > 0) (void)write(fd, pid_buf, (size_t)len);
+    }
+    return fd; /* Intentionally kept open to hold flock for daemon lifetime */
+}
 
 int write_sysfs_safe(const char *path, const char *val) {
     int fd = open(path, O_RDWR);
@@ -91,6 +140,20 @@ if (n <= 0) return 0;
 return strtoull(buf, NULL, 10);
 }
 
+static void ensure_intel_rapl_loaded(void) {
+if (cpu_vendor != VENDOR_INTEL) return;
+if (access("/sys/class/powercap/intel-rapl:0/energy_uj", R_OK) == 0 ||
+access("/sys/class/powercap/intel-rapl/intel-rapl:0/energy_uj", R_OK) == 0) {
+return;
+}
+
+char *const argv[] = { "modprobe", "intel_rapl_msr", NULL };
+if (spawn_safe("/sbin/modprobe", argv) < 0) {
+(void)spawn_safe("/usr/bin/modprobe", argv);
+}
+usleep(100000); /* Allow udev/sysfs 100ms to expose powercap nodes */
+}
+
 void detect_hardware(void) {
 FILE *f = fopen("/proc/cpuinfo", "r");
 if (f) {
@@ -104,6 +167,8 @@ break;
 }
 fclose(f);
 }
+
+ensure_intel_rapl_loaded();
 
 glob_t g;
 if (glob("/sys/class/hwmon/hwmon*/power1_input", 0, NULL, &g) == 0) {
@@ -158,6 +223,7 @@ FILE *wf = fopen(WATTS_FILE, "w");
 if (wf) {
 fprintf(wf, "%.2f\n", watts);
 fclose(wf);
+chmod(WATTS_FILE, 0644);
 }
 }
 }
@@ -175,94 +241,132 @@ snprintf(path, sizeof(path), "/sys/devices/system/cpu/cpu%d/cpufreq/scaling_gove
 write_sysfs_safe(path, gov);
 }
 
+void set_epp(int core_id, const char *epp) {
+char path[96];
+snprintf(path, sizeof(path), "/sys/devices/system/cpu/cpu%d/cpufreq/energy_performance_preference", core_id);
+write_sysfs_safe(path, epp);
+}
+
 void apply_intel_limits(PowerMode mode) {
-    if (cpu_vendor != VENDOR_INTEL) return;
+if (cpu_vendor != VENDOR_INTEL) return;
 
-    const char *no_turbo = (mode == MODE_LOW_POWER) ? "1" : "0";
-    const char *pl1_uw = (mode == MODE_LOW_POWER)   ? "6000000" :
-                         (mode == MODE_BALANCED)    ? "15000000" : "35000000";
+const char *no_turbo = (mode == MODE_LOW_POWER) ? "1" : "0";
+const char *pl1_uw   = (mode == MODE_LOW_POWER) ? "6000000" :
+(mode == MODE_BALANCED)  ? "15000000" : "35000000";
+const char *pl2_uw   = (mode == MODE_LOW_POWER) ? "8000000" :
+(mode == MODE_BALANCED)  ? "25000000" : "55000000";
 
-    write_sysfs_safe("/sys/devices/system/cpu/intel_pstate/no_turbo", no_turbo);
+write_sysfs_safe("/sys/devices/system/cpu/intel_pstate/no_turbo", no_turbo);
 
-    if (write_sysfs_safe("/sys/class/powercap/intel-rapl/intel-rapl:0/constraint_0_power_limit_uw", pl1_uw) < 0) {
-        write_sysfs_safe("/sys/class/powercap/intel-rapl:0/constraint_0_power_limit_uw", pl1_uw);
-    }
+if (write_sysfs_safe("/sys/class/powercap/intel-rapl/intel-rapl:0/constraint_0_power_limit_uw", pl1_uw) < 0) {
+write_sysfs_safe("/sys/class/powercap/intel-rapl:0/constraint_0_power_limit_uw", pl1_uw);
+}
+if (write_sysfs_safe("/sys/class/powercap/intel-rapl/intel-rapl:0/constraint_1_power_limit_uw", pl2_uw) < 0) {
+write_sysfs_safe("/sys/class/powercap/intel-rapl:0/constraint_1_power_limit_uw", pl2_uw);
+}
 }
 
 void apply_amd_limits(PowerMode mode) {
-    if (cpu_vendor != VENDOR_AMD) return;
-    const char *max_khz = (mode == MODE_LOW_POWER) ? "1600000" : "5200000";
-    long total_cpus = sysconf(_SC_NPROCESSORS_CONF);
-    if (total_cpus <= 0) total_cpus = 16;
+if (cpu_vendor != VENDOR_AMD) return;
+const char *max_khz = (mode == MODE_LOW_POWER) ? "1600000" : "5200000";
+long total_cpus = sysconf(_SC_NPROCESSORS_CONF);
+if (total_cpus <= 0) total_cpus = 16;
 
-    for (int i = 0; i < total_cpus; i++) {
-        char path[96];
-        snprintf(path, sizeof(path), "/sys/devices/system/cpu/cpu%d/cpufreq/scaling_max_freq", i);
-        write_sysfs_safe(path, max_khz);
-    }
+for (int i = 0; i < total_cpus; i++) {
+char path[96];
+snprintf(path, sizeof(path), "/sys/devices/system/cpu/cpu%d/cpufreq/scaling_max_freq", i);
+write_sysfs_safe(path, max_khz);
+}
 
-    if (access("/usr/bin/ryzenadj", X_OK) == 0 || access("/usr/local/bin/ryzenadj", X_OK) == 0) {
-        if (mode == MODE_LOW_POWER)
-            system("ryzenadj --stapm-limit=8000 --fast-limit=10000 --slow-limit=8000 >/dev/null 2>&1");
-        else if (mode == MODE_BALANCED)
-            system("ryzenadj --stapm-limit=25000 --fast-limit=35000 --slow-limit=25000 >/dev/null 2>&1");
-        else
-            system("ryzenadj --stapm-limit=45000 --fast-limit=55000 --slow-limit=45000 >/dev/null 2>&1");
-    }
+const char *ryzenadj_bin = NULL;
+if (access("/usr/bin/ryzenadj", X_OK) == 0) ryzenadj_bin = "/usr/bin/ryzenadj";
+else if (access("/usr/local/bin/ryzenadj", X_OK) == 0) ryzenadj_bin = "/usr/local/bin/ryzenadj";
+
+if (ryzenadj_bin) {
+if (mode == MODE_LOW_POWER) {
+char *const argv[] = { "ryzenadj", "--stapm-limit=8000", "--fast-limit=10000", "--slow-limit=8000", NULL };
+spawn_safe(ryzenadj_bin, argv);
+} else if (mode == MODE_BALANCED) {
+char *const argv[] = { "ryzenadj", "--stapm-limit=25000", "--fast-limit=35000", "--slow-limit=25000", NULL };
+spawn_safe(ryzenadj_bin, argv);
+} else {
+char *const argv[] = { "ryzenadj", "--stapm-limit=45000", "--fast-limit=55000", "--slow-limit=45000", NULL };
+spawn_safe(ryzenadj_bin, argv);
+}
+}
 }
 
 void apply_mode(PowerMode mode) {
-    apply_intel_limits(mode);
-    apply_amd_limits(mode);
-    long total_cpus = sysconf(_SC_NPROCESSORS_CONF);
-    if (total_cpus <= 0) total_cpus = 16;
+apply_intel_limits(mode);
+apply_amd_limits(mode);
+long total_cpus = sysconf(_SC_NPROCESSORS_CONF);
+if (total_cpus <= 0) total_cpus = 16;
 
-    if (mode == MODE_LOW_POWER) {
-        set_governor(0, "powersave");
-        for (int i = 1; i < total_cpus; i++) {
-            if (cpu_vendor == VENDOR_INTEL && is_smt_sibling(i)) {
-                set_core(i, 0);
-            } else {
-                set_core(i, 1);
-                set_governor(i, "powersave");
-            }
-        }
-    } else if (mode == MODE_BALANCED) {
-        set_governor(0, "schedutil");
-        for (int i = 1; i < total_cpus; i++) {
-            set_core(i, 1);
-            set_governor(i, "schedutil");
-        }
-    } else if (mode == MODE_PERFORMANCE) {
-        set_governor(0, "performance");
-        for (int i = 1; i < total_cpus; i++) {
-            set_core(i, 1);
-            set_governor(i, "performance");
-        }
-    }
+if (mode == MODE_LOW_POWER) {
+set_governor(0, "powersave");
+set_epp(0, "power");
+for (int i = 1; i < total_cpus; i++) {
+if (cpu_vendor == VENDOR_INTEL && is_smt_sibling(i)) {
+set_core(i, 0);
+} else {
+set_core(i, 1);
+set_governor(i, "powersave");
+set_epp(i, "power");
+}
+}
+} else if (mode == MODE_BALANCED) {
+set_governor(0, "schedutil");
+set_epp(0, "balance_performance");
+for (int i = 1; i < total_cpus; i++) {
+set_core(i, 1);
+set_governor(i, "schedutil");
+set_epp(i, "balance_performance");
+}
+} else if (mode == MODE_PERFORMANCE) {
+set_governor(0, "performance");
+set_epp(0, "performance");
+for (int i = 1; i < total_cpus; i++) {
+set_core(i, 1);
+set_governor(i, "performance");
+set_epp(i, "performance");
+}
+}
 }
 
 PowerMode get_current_mode(void) {
-    int fd = open(MODE_FILE, O_RDONLY);
-    if (fd < 0) return MODE_BALANCED;
+int fd = open(MODE_FILE, O_RDONLY);
+if (fd < 0) return MODE_BALANCED;
 
-    char buf[16] = {0};
-    read(fd, buf, sizeof(buf) - 1);
-    close(fd);
+char buf[16] = {0};
+ssize_t n = read(fd, buf, sizeof(buf) - 1);
+close(fd);
+if (n <= 0) return MODE_BALANCED;
 
-    if (strncmp(buf, "low-power", 9) == 0) return MODE_LOW_POWER;
-    if (strncmp(buf, "performance", 11) == 0) return MODE_PERFORMANCE;
-    return MODE_BALANCED;
+if (strncmp(buf, "low-power", 9) == 0) return MODE_LOW_POWER;
+if (strncmp(buf, "performance", 11) == 0) return MODE_PERFORMANCE;
+return MODE_BALANCED;
 }
 
 int main(void) {
-    detect_hardware();
+if (acquire_singleton_lock() < 0) {
+fprintf(stderr, "[powerd] Another instance is already running (or missing root privileges).\n");
+return 1;
+}
 
-    while (1) {
-        PowerMode mode = get_current_mode();
-        apply_mode(mode);
-        sleep(1);
-        update_telemetry();
-    }
-    return 0;
+detect_hardware();
+
+int first_run = 1;
+PowerMode last_mode = MODE_BALANCED;
+
+while (1) {
+PowerMode mode = get_current_mode();
+if (first_run || mode != last_mode) {
+apply_mode(mode);
+last_mode = mode;
+first_run = 0;
+}
+sleep(1);
+update_telemetry();
+}
+return 0;
 }
