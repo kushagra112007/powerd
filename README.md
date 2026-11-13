@@ -34,13 +34,13 @@ BEFORE powerd (Load) : 11016 mW
 AFTER  powerd (Load) : 5118 mW
 ```
 
-### Intel Core 13th Gen Hybrid (HP Desktop â€” Puppy Linux 6.1.148)
+### Intel Core i7-13700H (HP Pro Tower 280 G9 PCI Desktop PC - Puppy Linux 6.1.148)
 ```text
 [low-power]   Cores=0,2,4,6,8-12,14-19 | PL11=6000000 uW  | 15s Load Avg=11.06 W
 [performance] Cores=0-19               | PL11=35000000 uW | EPP=performance | 15s Load Avg=35.20 W
 ```
 
-### AMD Ryzen 7 8845HS (ASUS TUF FA507UV à€” CachyOS)
+### AMD Ryzen 7 8845HS (ASUS TUF FA507UV - CachyOS)
 ```text
 [powerctl] Mode switched to: low-power
 Max Freq (kHz) : 1600000
