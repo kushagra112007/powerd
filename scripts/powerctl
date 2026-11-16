@@ -60,12 +60,14 @@ show_status() {
 }
 
 usage() {
-    echo "Usage: powerctl {low-power|balanced|performance|status}"
-    echo "Aliases: low, powersave, eco | bal | perf"
+    echo "Usage: powerctl {auto|ultra-low-power|low-power|balanced|performance|status}"
+    echo "Aliases: auto | ultra-low, ultralow, ulp | low, powersave, eco | bal | perf"
 }
 
 case "$1" in
-    low-power|low|powersave|eco) set_mode "low-power" ;;
+    auto)                                      set_mode "auto" ;;
+    ultra-low-power|ultra-low|ultralow|ulp)    set_mode "ultra-low-power" ;;
+    low-power|low|powersave|eco)               set_mode "low-power" ;;
     balanced|bal)                set_mode "balanced" ;;
     performance|perf)            set_mode "performance" ;;
     status|"")                   show_status ;;

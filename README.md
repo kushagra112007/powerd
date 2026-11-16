@@ -2,7 +2,7 @@
 
 A lightweight, zero-dependency Linux power management daemon written in pure POSIX C. Designed to enforce hard silicon power ceilings across both modern `systemd` distributions and minimal Puppy Linux / BusyBox systems without Python, D-Bus, or runtime library bloat (`<1 MB` RSS).
 
-## Features (v1.2.0)
+## Features (v1.3.0)
 
 - **Automatic U-Series vs. H-Series TDP Classification:** Parses `/proc/cpuinfo` SKUs (`U`/`P`/`Y` vs. `H`/`HS`/`HX`/`HK`) and RAPL capability registers to apply architecture-specific power curves rather than one-size-fits-all wattage caps.
 - **Dual Intel RAPL + MMIO Enforcement (`intel-rapl:0` & `intel-rapl-mmio:0`):**
@@ -20,9 +20,9 @@ A lightweight, zero-dependency Linux power management daemon written in pure POS
 
 ## Verified Hardware Benchmarks
 
-Measured under sustained multi-threaded OpenSSL `rsa2048` workloads comparing Stock defaults against `powerd` (`v1.2.0`):
+Measured under sustained multi-threaded OpenSSL `rsa2048` workloads comparing Stock defaults against `powerd` (`v1.3.0`):
 
-### 1. Power & Performance-Per-Watt Scaling (v1.2.0)
+### 1. Power & Performance-Per-Watt Scaling (v1.3.0)
 
 | Platform & Silicon | Profile | Sustained Power | RSA-2048 Sign Speed | Efficiency (Sign/s per Watt) | Power Delta vs. Stock |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -71,11 +71,13 @@ AFTER  powerd (Load) : 5118 mW
 
 ### AMD Ryzen 7 8845HS (ASUS TUF FA507UV — CachyOS)
 ```text
-[powerctl] Mode switched to: low-power
-Max Freq (kHz) : 1600000
-Active Gov     : powersave
-Ryzen 7 8845HS BEFORE (Stock Load) : 20565 mW
-Ryzen 7 8845HS AFTER  (1.60 GHz)   : 12755 mW
+[powerctl] Mode switched to: balanced
+Active Mode    : balanced (15.5W STAPM, amd-pstate-epp)
+Online Cores   : 16 / 16 threads
+Ryzen 7 8845HS Stock Load   : 28,670 mW (31,296.0 sign/s)
+Ryzen 7 8845HS Balanced     : 15,350 mW (22,338.3 sign/s | +33.3% perf/W)
+Ryzen 7 8845HS Low-Power    :  7,450 mW ( 7,118.7 sign/s | 6C)
+Ryzen 7 8845HS Ultra-Low    :  5,350 mW ( 5,990.7 sign/s | 4C, boost OFF)
 ```
 </details>
 
@@ -91,13 +93,14 @@ curl -4 -fL https://raw.githubusercontent.com/kushagra112007/powerd/main/scripts
 
 ```sh
 powerctl auto         # Automatic AC (balanced) / Battery (low-power) switching
-powerctl low          # Force low-power profile (9W U / 10W H Intel PL1; 6W Zen 4+ STAPM)
-powerctl balanced     # Force balanced profile (15W Intel PL1 / 15.5W Ryzen H STAPM)
-powerctl performance  # Force performance profile (full turbo & power limits)
+powerctl ultra-low    # Force ultra-low-power profile (6W Intel PL1; 5.5W Zen 4+ STAPM, 4C)
+powerctl low          # Force low-power profile (9W U / 10W H Intel PL1; 7.5W Zen 4+ STAPM, 6C)
+powerctl balanced     # Force balanced profile (15W Intel PL1; 15.5W Ryzen H STAPM + EPP)
+powerctl performance  # Force performance profile (full turbo & 54W/80W power limits)
 powerctl status       # Display active mode, online cores, and live package wattage
 ```
 
-*(Aliases supported: `low-power`, `powersave`, `eco`, `bal`, `perf`.)*
+*(Aliases supported: `ultra-low-power`, `ultralow`, `ulp`, `low-power`, `powersave`, `eco`, `bal`, `perf`.)*
 
 You can also control the daemon directly without `powerctl` via `/run/powerd/`:
 
