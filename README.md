@@ -47,54 +47,73 @@ On 12th/13th Gen Intel H-series laptops, writing only `/sys/class/powercap/intel
 
 v1.1 (sysfs RAPL only, default tau) -> 25.04 W | 25.01 W | 25.02 W | 24.97 W | 25.00 W
 v1.2.0 (MSR + MMIO RAPL, 1s tau)    -> 15.06 W | 15.02 W | 15.00 W | 15.00 W | 15.00 W
+```
 
-Intel Core i5-1235U (HP ProBook 440 G9 — BookwormPup64)
+<details>
+<summary>Additional Raw Hardware Verification Logs</summary>
 
+### Intel Core i5-1235U (HP ProBook 440 G9 — BookwormPup64)
+```text
 [powerctl] Mode switched to: low-power
 Online Cores : 0,2,4-11
 RAPL PL1 uW  : 6000000
 BEFORE powerd (Load) : 11016 mW
 AFTER  powerd (Load) : 5118 mW
+```
 
-Intel Core i7-13700H (HP Pro Tower 280 G9 — Puppy Linux 6.1.148)
-
+### Intel Core i7-13700H (HP Pro Tower 280 G9 — Puppy Linux 6.1.148)
+```text
 [low-power]   Cores=0,2,4,6,8,10,12,14,16-19 | PL1=6000000 uW  | 15s Load Avg=11.06 W
 [performance] Cores=0-19                     | PL1=35000000 uW | EPP=performance | 15s Load Avg=35.20 W
+```
 
-AMD Ryzen 7 8845HS (ASUS TUF FA507UV — CachyOS)
-
+### AMD Ryzen 7 8845HS (ASUS TUF FA507UV — CachyOS)
+```text
 [powerctl] Mode switched to: low-power
 Max Freq (kHz) : 1600000
 Active Gov     : powersave
 Ryzen 7 8845HS BEFORE (Stock Load) : 20565 mW
 Ryzen 7 8845HS AFTER  (1.60 GHz)   : 12755 mW
+```
+</details>
 
-Quick Install
+---
 
-curl -4 -fL [https://raw.githubusercontent.com/kushagra112007/powerd/main/scripts/install.sh](https://raw.githubusercontent.com/kushagra112007/powerd/main/scripts/install.sh) | sh
+## Quick Install
 
-Usage
+```sh
+curl -4 -fL https://raw.githubusercontent.com/kushagra112007/powerd/main/scripts/install.sh | sh
+```
 
+## Usage
+
+```sh
 powerctl auto         # Automatic AC (balanced) / Battery (low-power) switching
 powerctl low          # Force low-power profile (9W U / 10W H Intel PL1; 6W Zen 4+ STAPM)
 powerctl balanced     # Force balanced profile (15W Intel PL1 / 15.5W Ryzen H STAPM)
 powerctl performance  # Force performance profile (full turbo & power limits)
 powerctl status       # Display active mode, online cores, and live package wattage
+```
 
-(Aliases supported: low-power, powersave, eco, bal, perf.)
+*(Aliases supported: `low-power`, `powersave`, `eco`, `bal`, `perf`.)*
 
+You can also control the daemon directly without `powerctl` via `/run/powerd/`:
+
+```sh
 echo balanced > /run/powerd/mode   # Switch active mode
 cat /run/powerd/watts               # Read live package power draw in Watts
+```
 
-Building from Source
+## Building from Source
 
+```sh
 # Native GLIBC build
 gcc -O2 -Wall -Wextra src/powerd.c -o /usr/local/bin/powerd
 
 # Portable static musl build
 musl-gcc -O2 -march=x86-64 -static src/powerd.c -o bin/powerd-x86_64
+```
 
+## License
 
-License
-
-Licensed under the MIT License.
+Licensed under the [MIT License](LICENSE).
