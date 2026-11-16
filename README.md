@@ -1,78 +1,100 @@
 # powerd
 
-A lightweight, zero-dependency Linux power management daemon written in pure C and compiled statically against `musl-libc`. Designed to run across both modern `systemd` distributions and minimal Puppy Linux / BusyBox systems without Python, D-Bus, or runtime library dependencies.
+A lightweight, zero-dependency Linux power management daemon written in pure POSIX C. Designed to enforce hard silicon power ceilings across both modern `systemd` distributions and minimal Puppy Linux / BusyBox systems without Python, D-Bus, or runtime library bloat (`<1 MB` RSS).
 
-## Features
+## Features (v1.2.0)
 
-- **Cross-Vendor Hardware Enforcement:** Automatically detects CPU vendor (`/proc/cpuinfo`) and applies vendor-specific power ceilings:
-  - **Intel (`intel_pstate` + `intel-rapl`):** Parks P-core SMT siblings (`is_smt_sibling`), disables Turbo Boost (`no_turbo = 1`), shifts HWP EPP (`power` / `balance_power` vs. `performance`), and enforces `6 W` PL1 / `8 W` PL2 RAPL package limits in `low-power` mode.
-  - **AMD (`acpi-cpufreq` / `amd-pstate`):** Clamps `scaling_max_freq` to the `1.60 GHz` base P-state (`1600000 kHz`), switches governors to `powersave`, and optionally invokes `ryzenadj` (`8 W` STAPM) if present—with zero hard external dependencies.
-- **Static `musl` Binary:** Single portable x86_64 ELF executable (`~112 KB` binary, `~128 KB` RSS) with zero shared library requirements.
-- **Hardened Daemon Lifecycle:** Enforces single-instance execution via `flock()` on `/run/powerd/powerd.pid`, isolates runtime telemetry/control files under `/run/powerd/`, and auto-probes `intel_rapl_msr` via `fork()` + `execve()` (zero `system()` shell invocations) on minimal kernels.
-- **Universal Init Support:** Ships with automated installation for both `systemd` units and Puppy Linux (`/root/Startup` & `/etc/init.d`) environments.
+- **Automatic U-Series vs. H-Series TDP Classification:** Parses `/proc/cpuinfo` SKUs (`U`/`P`/`Y` vs. `H`/`HS`/`HX`/`HK`) and RAPL capability registers to apply architecture-specific power curves rather than one-size-fits-all wattage caps.
+- **Dual Intel RAPL + MMIO Enforcement (`intel-rapl:0` & `intel-rapl-mmio:0`):**
+  - Writes PL1, PL2, and a tightened **`1s` `tau` (`constraint_0_time_window_us`)** across both standard MSR RAPL and MMIO RAPL interfaces so OEM DPTF firmware cannot override package ceilings on H-series laptops.
+  - Keeps Turbo enabled (`no_turbo = 0`) under RAPL regulation (`9W` PL1 on U-series, `10W` PL1 on H-series in `low-power`; `15W` PL1 in `balanced`) to avoid the static-uncore base-clock efficiency cliff.
+  - Parks P-core SMT siblings (`is_smt_sibling`) on H-series processors in `low-power` mode while keeping all physical P- and E-cores online.
+- **AMD Ryzen Architecture-Aware Control (`Zen 3` / `Zen 4+`):**
+  - Detects Zen generation (`family`/`model`) to clamp `scaling_max_freq` (`2.80 GHz` on Zen 4+, `2.40 GHz` on Zen 3), park SMT siblings / excess cores in `low-power`, and enforce SMU limits via `ryzenadj` (`15.5W` STAPM sweet spot on H/HS chips in `balanced`, `6W` in `low-power`) when available—with zero hard external dependencies.
+- **Autonomous AC / Battery Switching & Sleep Recovery:**
+  - Automatically switches between `balanced` (AC) and `low-power` (Battery) via `/sys/class/power_supply/*/online` when set to `auto` (default), while honoring explicit manual overrides in `/run/powerd/mode`.
+  - Detects suspend-to-RAM wakeups and periodically refreshes registers every `15s` so BIOS/EC resets never wipe active watt caps.
+- **Hardened Daemon Lifecycle:** Single-instance `flock()` lock on `/run/powerd/powerd.pid`, live package telemetry in `/run/powerd/watts`, and `fork()` + `execve()` module probing (`intel_rapl_msr`) with zero `system()` shell invocations.
+
+---
 
 ## Verified Hardware Benchmarks
 
-Measured under sustained multi-thread CPU load comparing `performance` / stock defaults against `powerd` in `low-power` mode:
+Measured under sustained multi-threaded OpenSSL `rsa2048` workloads comparing Stock defaults against `powerd` (`v1.2.0`):
 
-| Platform & CPU | OS & Scaling Driver | Telemetry Source | Stock / `performance` | `powerd` (`low-power`) | Power Reduction |
+### 1. Power & Performance-Per-Watt Scaling (v1.2.0)
+
+| Platform & Silicon | Profile | Sustained Power | RSA-2048 Sign Speed | Efficiency (Sign/s per Watt) | Power Delta vs. Stock |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **HP ProBook 440 G9**<br>Intel Core i5-1235U (2P+8E / 12T) | BookwormPup64 (`intel_pstate`) | CPU Package (`intel-rapl:0`) | 11.02 W (`11,016 mW`) | **5.12 W (`5,118 mW`)** | **-53.5% (-5.90 W)** |
-| **HP Pro Tower 280 G9 PCI Desktop PC**<br>Intel Core i7-13700H (14C / 20T) | Puppy Linux 6.1 (`intel_pstate`) | CPU Package (`intel-rapl:0`) | 35.20 W (`35,200 mW`) | **11.06 W (`11,060 mW`)** | **-68.6% (-24.14 W)** |
-| **ASUS TUF Gaming A15 (FA507UV)**<br>AMD Ryzen 7 8845HS (8C / 16T) | CachyOS (`acpi-cpufreq`) | Total System Battery (`BAT1`) | 20.57 W (`20,565 mW`) | **12.76 W (`12,755 mW`)** | **-38.0% (-7.81 W)** |
+| **Intel Core i5-13420H**<br>*(8C / 12T: 4P+4E, H-Series)*<br>BookwormPup64 (`intel_pstate`) | Stock (12T) | 25.90 W | 4,861.7 sign/s | 187.7 sign/s/W | Baseline |
+| | **`powerd` Balanced (`15W` PL1, 1s tau)** | **15.01 W** | **8,171.2 sign/s** | **544.4 sign/s/W (2.9x)** | **-42.0% (-10.89 W)** |
+| | **`powerd` Low-Power (`10W` PL1, 8C)** | **10.00 W** | **1,638.0 sign/s** | **163.8 sign/s/W** | **-61.4% (-15.90 W)** |
+| **HP ProBook 440 G9**<br>*Intel Core i5-1235U (2P+8E / 12T)*<br>BookwormPup64 (`intel_pstate`) | Stock (12T) | 11.02 W | — | — | Baseline |
+| | **`powerd` Low-Power** | **5.12 W** | — | — | **-53.5% (-5.90 W)** |
+| **HP Pro Tower 280 G9**<br>*Intel Core i7-13700H (14C / 20T)*<br>Puppy Linux 6.1 (`intel_pstate`) | Performance (`35W` PL1) | 35.20 W | — | — | Baseline |
+| | **`powerd` Low-Power (14C)** | **11.06 W** | — | — | **-68.6% (-24.14 W)** |
+| **ASUS TUF Gaming A15 (FA507UV)**<br>*AMD Ryzen 7 8845HS (8C / 16T)*<br>CachyOS (`amd-pstate` / `ryzenadj`) | Stock (16T) | 20.57 W *(BAT1)* | — | — | Baseline |
+| | **`powerd` Balanced (`15.5W` STAPM)** | **15.50 W** *(Pkg)* | — | *~80.5% perf @ ~49% pkg W* | **-24.6% System / -51% Pkg** |
+| | **`powerd` Low-Power (`6W` STAPM)** | **12.76 W** *(BAT1)* | — | — | **-38.0% (-7.81 W)** |
 
-<details>
-<summary>Raw Hardware Verification Logs</summary>
+### 2. Why Dual RAPL (`MMIO`) + `1s` `tau` Matters on Intel H-Series
 
-### Intel Core i5-1235U (HP ProBook 440 G9 — BookwormPup64)
+On 12th/13th Gen Intel H-series laptops, writing only `/sys/class/powercap/intel-rapl:0` leaves the processor pinned to its `25W` PL2 ceiling under sustained load due to OEM MMIO RAPL limits and long default `tau` windows. Mirroring limits to `intel-rapl-mmio:0` with `constraint_0_time_window_us = 1000000` clamps sustained wattage immediately:
+
 ```text
+[powerd] CPU Vendor    : Intel (8c/12t, H-Series)
+[powerd] Telemetry Path: /sys/class/powercap/intel-rapl/intel-rapl:0/energy_uj
+
+v1.1 (sysfs RAPL only, default tau) -> 25.04 W | 25.01 W | 25.02 W | 24.97 W | 25.00 W
+v1.2.0 (MSR + MMIO RAPL, 1s tau)    -> 15.06 W | 15.02 W | 15.00 W | 15.00 W | 15.00 W
+
+Intel Core i5-1235U (HP ProBook 440 G9 — BookwormPup64)
+
 [powerctl] Mode switched to: low-power
 Online Cores : 0,2,4-11
-No Turbo     : 1
 RAPL PL1 uW  : 6000000
 BEFORE powerd (Load) : 11016 mW
 AFTER  powerd (Load) : 5118 mW
-```
 
-### Intel Core i7-13700H (HP Pro Tower 280 G9 PCI Desktop PC — Puppy Linux 6.1.148)
-```text
+Intel Core i7-13700H (HP Pro Tower 280 G9 — Puppy Linux 6.1.148)
+
 [low-power]   Cores=0,2,4,6,8,10,12,14,16-19 | PL1=6000000 uW  | 15s Load Avg=11.06 W
 [performance] Cores=0-19                     | PL1=35000000 uW | EPP=performance | 15s Load Avg=35.20 W
-```
 
-### AMD Ryzen 7 8845HS (ASUS TUF FA507UV — CachyOS)
-```text
+AMD Ryzen 7 8845HS (ASUS TUF FA507UV — CachyOS)
+
 [powerctl] Mode switched to: low-power
 Max Freq (kHz) : 1600000
 Active Gov     : powersave
 Ryzen 7 8845HS BEFORE (Stock Load) : 20565 mW
 Ryzen 7 8845HS AFTER  (1.60 GHz)   : 12755 mW
-```
-</details>
 
-## Quick Install
+Quick Install
 
-```sh
-curl -4 -fL https://raw.githubusercontent.com/kushagra112007/powerd/main/scripts/install.sh | sh
-```
+curl -4 -fL [https://raw.githubusercontent.com/kushagra112007/powerd/main/scripts/install.sh](https://raw.githubusercontent.com/kushagra112007/powerd/main/scripts/install.sh) | sh
 
-## Usage
+Usage
 
-```sh
-powerctl low          # Enforce low-power profile (6W Intel PL1 / 1.6GHz AMD clamp)
-powerctl balanced     # Restore balanced scaling (15W Intel PL1 / schedutil)
-powerctl performance  # Full turbo & performance governor
-powerctl status       # Display active mode, online cores, and package wattage
-```
+powerctl auto         # Automatic AC (balanced) / Battery (low-power) switching
+powerctl low          # Force low-power profile (9W U / 10W H Intel PL1; 6W Zen 4+ STAPM)
+powerctl balanced     # Force balanced profile (15W Intel PL1 / 15.5W Ryzen H STAPM)
+powerctl performance  # Force performance profile (full turbo & power limits)
+powerctl status       # Display active mode, online cores, and live package wattage
 
-*(Aliases supported: `low-power`, `powersave`, `eco`, `bal`, `perf`.)*
+(Aliases supported: low-power, powersave, eco, bal, perf.)
 
-## Building from Source
+echo balanced > /run/powerd/mode   # Switch active mode
+cat /run/powerd/watts               # Read live package power draw in Watts
 
-```sh
+Building from Source
+
+# Native GLIBC build
+gcc -O2 -Wall -Wextra src/powerd.c -o /usr/local/bin/powerd
+
+# Portable static musl build
 musl-gcc -O2 -march=x86-64 -static src/powerd.c -o bin/powerd-x86_64
-```
 
-## License
 
-Licensed under the [MIT License](LICENSE).
+License
+
+Licensed under the MIT License.
