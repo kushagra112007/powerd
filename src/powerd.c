@@ -491,7 +491,7 @@ spawn_safe(ryzenadj_path, argv);
 }
 } else {
 if (tdp_class == CLASS_H_SERIES) {
-char *const argv[] = { "ryzenadj", "--stapm-limit=35000", "--slow-limit=35000", "--fast-limit=54000", "--stapm-time=20", NULL };
+char *const argv[] = { "ryzenadj", "--stapm-limit=54000", "--slow-limit=54000", "--fast-limit=80000", "--stapm-time=300", NULL };
 spawn_safe(ryzenadj_path, argv);
 } else {
 char *const argv[] = { "ryzenadj", "--stapm-limit=20000", "--slow-limit=20000", "--fast-limit=30000", "--stapm-time=20", NULL };
