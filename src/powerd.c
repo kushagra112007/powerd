@@ -646,7 +646,51 @@ if (strncmp(buf, "performance", 11) == 0) return MODE_PERFORMANCE;
 }
 }
 
-return is_on_ac_power() ? MODE_BALANCED : MODE_LOW_POWER;
+static int prompted_low_bat = 0;
+
+    if (is_on_ac_power()) {
+        prompted_low_bat = 0;
+        return MODE_BALANCED;
+    }
+
+    int cap = -1;
+    glob_t g;
+    if (glob("/sys/class/power_supply/BAT*/capacity", 0, NULL, &g) == 0) {
+        if (g.gl_pathc > 0 && access(g.gl_pathv[0], R_OK) == 0) {
+            cap = (int)read_ull(g.gl_pathv[0]);
+        }
+        globfree(&g);
+    }
+
+    if (cap > 25) {
+        prompted_low_bat = 0;
+    } else if (cap >= 0 && cap <= 20 && !prompted_low_bat) {
+        prompted_low_bat = 1;
+        if (access("/usr/local/bin/powerd-prompt", X_OK) == 0) {
+            pid_t pid = fork();
+            if (pid == 0) {
+                pid_t grand = fork();
+                if (grand < 0) _exit(1);
+                if (grand > 0) _exit(0);
+                int devnull = open("/dev/null", O_WRONLY);
+                if (devnull >= 0) {
+                    dup2(devnull, STDOUT_FILENO);
+                    dup2(devnull, STDERR_FILENO);
+                    if (devnull > 2) close(devnull);
+                }
+                char cap_str[16];
+                snprintf(cap_str, sizeof(cap_str), "%d", cap);
+                char *const argv[] = { "powerd-prompt", cap_str, NULL };
+                char *const envp[] = { "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", NULL };
+                execve("/usr/local/bin/powerd-prompt", argv, envp);
+                _exit(127);
+            } else if (pid > 0) {
+                (void)waitpid(pid, NULL, 0);
+            }
+        }
+    }
+
+    return MODE_LOW_POWER;
 }
 
 int main(void) {

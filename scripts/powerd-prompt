@@ -1,0 +1,26 @@
+#!/bin/sh
+CAP="${1:-20}"
+
+TARGET_UID=""
+for bus in /run/user/*/bus; do
+    [ -S "$bus" ] || continue
+    UID_NUM=$(echo "$bus" | cut -d/ -f4)
+    if [ "$UID_NUM" -ge 1000 ] 2>/dev/null; then
+        TARGET_UID="$UID_NUM"
+        break
+    fi
+done
+
+[ -z "$TARGET_UID" ] && exit 0
+TARGET_USER=$(id -nu "$TARGET_UID" 2>/dev/null)
+[ -z "$TARGET_USER" ] && exit 0
+
+if command -v notify-send >/dev/null 2>&1; then
+    CHOICE=$(runuser -u "$TARGET_USER" -- env         DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${TARGET_UID}/bus"         notify-send -u critical -i battery-caution         --action="yes=Yes (5.5W Ultra-Low)"         --action="no=No (Stay 7.5W)"         "Battery at ${CAP}%"         "Switch powerd to Ultra-Low-Power mode (5.5W, 4 cores)?" 2>/dev/null)
+
+    if [ "$CHOICE" = "yes" ]; then
+        mkdir -p /run/powerd
+        echo "ultra-low-power" > /run/powerd/mode
+        chmod 0644 /run/powerd/mode 2>/dev/null || true
+    fi
+fi
