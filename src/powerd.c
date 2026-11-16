@@ -152,7 +152,7 @@ return strtoull(buf, NULL, 10);
 
 static CpuTdpClass classify_tdp_from_model_name(const char *raw_model) {
 char clean[256] = {0};
-strncpy(clean, raw_model, sizeof(clean) - 1);
+snprintf(clean, sizeof(clean), "%s", raw_model);
 
 /* Strip trailing "@ 2.50GHz" if present */
 char *at = strchr(clean, '@');
@@ -406,7 +406,7 @@ const char *tau_us = "1000000"; /* 1s PL1 window so sustained loads drop from PL
 if (tdp_class == CLASS_H_SERIES) {
 if (mode == MODE_LOW_POWER) {
 pl1_uw = "10000000"; /* 10W PL1 */
-pl2_uw = "12000000"; /* 12W PL2 */
+pl2_uw = "10500000"; /* 10.5W PL2 */
 } else if (mode == MODE_BALANCED) {
 pl1_uw = "15000000"; /* 15W PL1 */
 pl2_uw = "25000000"; /* 25W PL2 */
@@ -419,7 +419,7 @@ tau_us = "28000000";
 /* U-Series (15W Ultrabook class) */
 if (mode == MODE_LOW_POWER) {
 pl1_uw = "9000000";  /* 9W PL1 (avoids 6W static-uncore cliff) */
-pl2_uw = "12000000"; /* 12W PL2 */
+pl2_uw = "10500000"; /* 10.5W PL2 */
 } else if (mode == MODE_BALANCED) {
 pl1_uw = "15000000"; /* 15W PL1 */
 pl2_uw = "25000000"; /* 25W PL2 */
