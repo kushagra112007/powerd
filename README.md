@@ -36,7 +36,8 @@ Measured under sustained multi-threaded OpenSSL `rsa2048` workloads comparing St
 | **ASUS TUF Gaming A15 (FA507UV)**<br>*AMD Ryzen 7 8845HS (8C / 16T, H-Series, Zen 4+)*<br>CachyOS (`amd-pstate-epp` / `ryzenadj`) | Stock (Unclamped) | 28.67 W | 31,296.0 sign/s | 1,091.6 sign/s/W | Baseline |
 | | **`powerd` Performance (`54W` Burst)** | **27.91 W** | **31,037.7 sign/s** | **1,112.1 sign/s/W** | **-2.7% (-0.76 W)** |
 | | **`powerd` Balanced (`15.5W` STAPM + EPP)** | **15.35 W** | **22,338.3 sign/s** | **1,455.3 sign/s/W** | **-46.5% (-13.32 W)** |
-| | **`powerd` Low-Power (`6W` STAPM, 4C)** | **5.98 W** | **2,597.9 sign/s** | **434.4 sign/s/W** | **-79.1% (-22.69 W)** |
+| | **`powerd` Low-Power (`7.5W` STAPM, 6C)** | **7.45 W** | **7,118.7 sign/s** | **955.5 sign/s/W** | **-74.0% (-21.22 W)** |
+| | **`powerd` Ultra-Low-Power (`5.5W` STAPM, 4C)** | **5.35 W** | **5,990.7 sign/s** | **1,119.8 sign/s/W** | **-81.3% (-23.32 W)** |
 
 ### 2. Why Dual RAPL (`MMIO`) + `1s` `tau` Matters on Intel H-Series
 

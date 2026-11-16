@@ -21,7 +21,7 @@ typedef enum { VENDOR_INTEL, VENDOR_AMD, VENDOR_UNKNOWN } CpuVendor;
 typedef enum { AMD_ZEN_LEGACY, AMD_ZEN3, AMD_ZEN4_PLUS } AmdArch;
 typedef enum { CLASS_U_SERIES, CLASS_H_SERIES } CpuTdpClass;
 typedef enum { TELEM_NONE, TELEM_HWMON_UW, TELEM_RAPL_UJ, TELEM_BAT_UA_UV } TelemType;
-typedef enum { MODE_LOW_POWER, MODE_BALANCED, MODE_PERFORMANCE } PowerMode;
+typedef enum { MODE_ULTRA_LOW_POWER, MODE_LOW_POWER, MODE_BALANCED, MODE_PERFORMANCE } PowerMode;
 
 static CpuVendor cpu_vendor = VENDOR_UNKNOWN;
 static AmdArch amd_arch = AMD_ZEN_LEGACY;
@@ -407,7 +407,10 @@ const char *pl2_uw = "25000000";
 const char *tau_us = "1000000"; /* 1s PL1 window so sustained loads drop from PL2 to PL1 promptly */
 
 if (tdp_class == CLASS_H_SERIES) {
-if (mode == MODE_LOW_POWER) {
+if (mode == MODE_ULTRA_LOW_POWER) {
+    pl1_uw = "6000000";  /* 6W PL1 */
+    pl2_uw = "7000000";  /* 7W PL2 */
+} else if (mode == MODE_LOW_POWER) {
 pl1_uw = "10000000"; /* 10W PL1 */
 pl2_uw = "10500000"; /* 10.5W PL2 */
 } else if (mode == MODE_BALANCED) {
@@ -420,7 +423,10 @@ tau_us = "28000000";
 }
 } else {
 /* U-Series (15W Ultrabook class) */
-if (mode == MODE_LOW_POWER) {
+if (mode == MODE_ULTRA_LOW_POWER) {
+    pl1_uw = "6000000";  /* 6W PL1 */
+    pl2_uw = "7000000";  /* 7W PL2 */
+} else if (mode == MODE_LOW_POWER) {
 pl1_uw = "9000000";  /* 9W PL1 (avoids 6W static-uncore cliff) */
 pl2_uw = "10500000"; /* 10.5W PL2 */
 } else if (mode == MODE_BALANCED) {
@@ -452,15 +458,17 @@ write_intel_rapl_domain(rapl_domains[i], pl1_uw, pl2_uw, tau_us);
 void apply_amd_limits(PowerMode mode) {
 if (cpu_vendor != VENDOR_AMD) return;
 
-const char *boost = (mode == MODE_LOW_POWER) ? "0" : "1";
+const char *boost = (mode == MODE_ULTRA_LOW_POWER) ? "0" : "1";
 write_sysfs_safe("/sys/devices/system/cpu/cpufreq/boost", boost);
 
 const char *max_khz = "5200000";
-if (mode == MODE_LOW_POWER) {
-if (amd_arch == AMD_ZEN4_PLUS) max_khz = "2800000";
-else if (amd_arch == AMD_ZEN3) max_khz = "2400000";
-else max_khz = "2000000";
-}
+    if (mode == MODE_ULTRA_LOW_POWER) {
+        max_khz = "2200000";
+    } else if (mode == MODE_LOW_POWER) {
+        if (amd_arch == AMD_ZEN4_PLUS) max_khz = "3200000";
+        else if (amd_arch == AMD_ZEN3) max_khz = "2600000";
+        else max_khz = "2200000";
+    }
 
 for (int i = 0; i < total_logical_cpus; i++) {
 char path[96];
@@ -469,9 +477,17 @@ write_sysfs_safe(path, max_khz);
 }
 
 if (ryzenadj_path[0] != '\0') {
-if (mode == MODE_LOW_POWER) {
-if (amd_arch == AMD_ZEN4_PLUS) {
-char *const argv[] = { "ryzenadj", "--stapm-limit=6000", "--slow-limit=6000", "--fast-limit=15000", "--stapm-time=3", NULL };
+        if (mode == MODE_ULTRA_LOW_POWER) {
+            if (amd_arch == AMD_ZEN4_PLUS) {
+                char *const argv[] = { "ryzenadj", "--stapm-limit=5500", "--slow-limit=5500", "--fast-limit=6000", "--stapm-time=2", NULL };
+                spawn_safe(ryzenadj_path, argv);
+            } else {
+                char *const argv[] = { "ryzenadj", "--stapm-limit=6500", "--slow-limit=6500", "--fast-limit=8000", "--stapm-time=3", NULL };
+                spawn_safe(ryzenadj_path, argv);
+            }
+        } else if (mode == MODE_LOW_POWER) {
+            if (amd_arch == AMD_ZEN4_PLUS) {
+                char *const argv[] = { "ryzenadj", "--stapm-limit=7500", "--slow-limit=7500", "--fast-limit=12000", "--stapm-time=4", NULL };
 spawn_safe(ryzenadj_path, argv);
 } else if (amd_arch == AMD_ZEN3) {
 char *const argv[] = { "ryzenadj", "--stapm-limit=8500", "--slow-limit=8500", "--fast-limit=25000", "--stapm-time=4", NULL };
@@ -509,10 +525,13 @@ set_core(i, 1);
 int target_phys_cores = total_physical_cores;
 int keep_smt = 1;
 
-if (mode == MODE_LOW_POWER) {
-keep_smt = 0;
-if (amd_arch == AMD_ZEN4_PLUS) {
-target_phys_cores = (total_physical_cores >= 4) ? 4 : total_physical_cores;
+    if (mode == MODE_ULTRA_LOW_POWER) {
+        keep_smt = 0;
+        target_phys_cores = (total_physical_cores >= 4) ? 4 : total_physical_cores;
+    } else if (mode == MODE_LOW_POWER) {
+        keep_smt = 0;
+        if (amd_arch == AMD_ZEN4_PLUS) {
+            target_phys_cores = (total_physical_cores >= 8) ? 6 : 4;
 } else if (amd_arch == AMD_ZEN3) {
 target_phys_cores = (total_physical_cores >= 8) ? 6 : 4;
 } else {
@@ -551,10 +570,10 @@ void apply_mode(PowerMode mode) {
 apply_intel_limits(mode);
 apply_amd_limits(mode);
 
-const char *gov = (mode == MODE_LOW_POWER) ? "powersave" :
-(mode == MODE_BALANCED)  ? "schedutil" : "performance";
-const char *epp = (mode == MODE_LOW_POWER) ? "balance_power" :
-(mode == MODE_BALANCED)  ? "balance_performance" : "performance";
+    const char *gov = (mode == MODE_PERFORMANCE) ? "performance" : "powersave";
+    const char *epp = (mode == MODE_ULTRA_LOW_POWER) ? "power" :
+                      (mode == MODE_LOW_POWER)       ? "balance_power" :
+                      (mode == MODE_BALANCED)        ? "balance_performance" : "performance";
 
 if (cpu_vendor == VENDOR_AMD) {
 apply_amd_cores(mode, gov, epp);
@@ -562,7 +581,7 @@ return;
 }
 
 /* Intel: only park SMT siblings in H-series low-power; keep all cores online on U-series */
-int park_smt = (mode == MODE_LOW_POWER && tdp_class == CLASS_H_SERIES);
+int park_smt = ((mode == MODE_LOW_POWER || mode == MODE_ULTRA_LOW_POWER) && tdp_class == CLASS_H_SERIES);
 
 set_governor(0, gov);
 set_epp(0, epp);
@@ -619,7 +638,8 @@ char buf[24] = {0};
 ssize_t n = read(fd, buf, sizeof(buf) - 1);
 close(fd);
 if (n > 0) {
-if (strncmp(buf, "low-power", 9) == 0) return MODE_LOW_POWER;
+if (strncmp(buf, "ultra-low-power", 15) == 0) return MODE_ULTRA_LOW_POWER;
+    if (strncmp(buf, "low-power", 9) == 0) return MODE_LOW_POWER;
 if (strncmp(buf, "balanced", 8) == 0) return MODE_BALANCED;
 if (strncmp(buf, "performance", 11) == 0) return MODE_PERFORMANCE;
 /* "auto" falls through to AC/battery detection */
