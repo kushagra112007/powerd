@@ -570,7 +570,9 @@ void apply_mode(PowerMode mode) {
 apply_intel_limits(mode);
 apply_amd_limits(mode);
 
-    const char *gov = (mode == MODE_PERFORMANCE) ? "performance" : "powersave";
+    int has_epp = (access("/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference", W_OK) == 0);
+    const char *gov = (mode == MODE_PERFORMANCE) ? "performance" :
+                      (mode == MODE_BALANCED && !has_epp) ? "schedutil" : "powersave";
     const char *epp = (mode == MODE_ULTRA_LOW_POWER) ? "power" :
                       (mode == MODE_LOW_POWER)       ? "balance_power" :
                       (mode == MODE_BALANCED)        ? "balance_performance" : "performance";
