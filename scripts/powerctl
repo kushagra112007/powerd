@@ -46,7 +46,7 @@ get_power_watts() {
 }
 
 show_status() {
-    CURRENT="balanced"
+    CURRENT="auto"
     [ -s "$MODE_FILE" ] && CURRENT=$(cat "$MODE_FILE")
     ONLINE=$(cat /sys/devices/system/cpu/online 2>/dev/null)
     WATTS=$(get_power_watts)
